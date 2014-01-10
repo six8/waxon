@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+
+set -e
+
+WAXON_DIR="$HOME/.waxon"
+
+STATUS=1
+function status() { 
+    if [[ $STATUS > 0 ]]; then
+        echo "/>" "$@" 1>&2; 
+    fi
+}
+
+function fail() { echo "/>" "$@" 1>&2; exit 1; }
+
+function waxon_project_dir() {
+    # Get the project directory for a project name
+    LINK="$WAXON_DIR/$1"
+
+    if [[ -e "$LINK" ]]; then    
+        echo $(readlink "$LINK")  
+    fi
+}
+
+function waxon_list() {
+    # List all the registered projects
+    for f in "$WAXON_DIR"/*; do
+        LINK=$(readlink "$f")
+        NAME=`basename "$f"`
+        echo "$NAME -> $LINK"
+    done        
+}
+
+
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then    
+    cat <<EOF
+Waxon - Subshells for projects.
+
+Usage: waxon [options] [<project>] [command]
+  
+Options:
+
+  -h --help       Show help
+  -l --list       List projects
+  -r --register   Register project
+  -u --unregister Un-register project
+
+EOF
+    exit 0    
+elif [[ "$1" == "--list" || "$1" == "-l" ]]; then    
+    waxon_list
+    exit 0
+elif [[ "$1" == "--register" || "$1" == "-r" ]]; then
+    # Time to register a new project directory
+    PROJECT_NAME=$2
+    PROJECT_DIR=`pwd`
+
+    EXISTING=$(waxon_project_dir "$PROJECT_NAME")
+
+    [[ ! -z "$EXISTING" ]] && fail "Project '$PROJECT_NAME' already exists with directory '$EXISTING'."
+
+    LINK="$WAXON_DIR/$PROJECT_NAME"
+
+    # Make $WAXON_DIR if needed
+    [[ ! -d "$WAXON_DIR" ]] && mkdir -p "$WAXON_DIR"
+
+    # Create link to project directory
+    ln -s "$PROJECT_DIR" "$LINK"
+
+    status "Registered '$PROJECT_NAME' -> '$PROJECT_DIR'."
+    exit 0
+elif [[ "$1" == "--unregister" || "$1" == "-u" ]]; then
+    # Un-register a new project directory
+    PROJECT_NAME=$2
+
+    LINK="$WAXON_DIR/$PROJECT_NAME"
+
+    [[ ! -e "$LINK" ]] && fail "Project '$PROJECT_NAME' not registered."
+
+    rm "$WAXON_DIR/$PROJECT_NAME"
+
+    status "Un-registered '$PROJECT_NAME'."
+    exit 0    
+else
+    [[ ! -z "$WAXON_PROJECT_NAME" ]] && fail "'$WAXON_PROJECT_NAME' project is already active. Maybe 'exit'?"
+
+    if [[ $# == 0 ]]; then
+        # No arguments, either activate the current project
+        # or error out.
+        if [[ -e "$PWD/.waxon" ]]; then
+            # Appears to be a waxon project
+            PROJECT_DIR=`pwd`
+            PROJECT_NAME=`basename "$PROJECT_DIR"`
+        else
+            fail "'$PWD' doesn't appear to be a project. Maybe create a .waxon file?"
+        fi
+    else
+        # Project is first argument
+        PROJECT_NAME=$1
+        shift
+
+        PROJECT_DIR=$(waxon_project_dir "$PROJECT_NAME")
+
+        [[ -z "$PROJECT_DIR" ]] && fail "Unknown project '$PROJECT_NAME'. Maybe 'waxon --register $PROJECT_NAME'?"
+    fi    
+fi
+
+if [[ $# > 0 ]]; then
+    # More arguments, treat this as a command and be silent about it
+    STATUS=0
+fi
+
+[[ ! -d "$PROJECT_DIR" ]] && fail "Can not find project directory '$PROJECT_DIR' for '$PROJECT_NAME'."
+
+# Waxon/waxoff -- Can use `waxoff` command to exit shell instead of boring `exit` or `Ctrl+D`
+function waxoff() { exit; }
+
+export -f waxoff
+
+# Make some envs availible to the sub-shell
+export WAXON_PROJECT_DIR=$PROJECT_DIR
+export WAXON_PROJECT_NAME=$PROJECT_NAME
+
+cd $PROJECT_DIR
+
+[[ -e ".waxon" ]] && SOURCE_WAXON=1
+[[ -e ".env" ]] && SOURCE_ENV=1
+
+st="wax on $PROJECT_NAME -> $PROJECT_DIR"
+if [[ $SOURCE_WAXON || $SOURCE_ENV ]]; then
+    src=""
+    [[ $SOURCE_WAXON ]] && src="$src .waxon"
+    [[ $SOURCE_ENV ]] && src="$src .env"
+
+    st="$st ($src )"
+fi
+
+status $st
+
+[[ $SOURCE_WAXON ]] && source .waxon
+[[ $SOURCE_ENV ]] && source .env
+
+# exec "${@:-$SHELL}"
+
+# Excute the shell/command
+${@:-$SHELL}
+
+# Exit sub-shell
+status "wax off $PROJECT_NAME"
